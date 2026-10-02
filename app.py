@@ -1,24 +1,13 @@
 import os
 import sqlite3
-from flask import Flask, request
 
-app = Flask(__name__)
-
-# Read secret from environment variables instead of hardcoding
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "default_secure_value")
-
-@app.route("/user")
-def get_user():
-    name = request.args.get("name")
-    
-    # Use context manager to safely open and close connection
+def get_user_data(username: str):
+    # Safe parameterized query
     with sqlite3.connect("app.db") as conn:
-        # Use parameterized queries to prevent SQL Injection
         cursor = conn.cursor()
-        rows = cursor.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchall()
-        
-    return str(rows)
+        rows = cursor.execute("SELECT * FROM users WHERE name = ?", (username,)).fetchall()
+    return rows
 
 if __name__ == "__main__":
-    # Disable debug mode for production security
-    app.run(debug=False)
+    db_pass = os.environ.get("DB_PASSWORD", "default_value")
+    print(get_user_data("test_user"))
