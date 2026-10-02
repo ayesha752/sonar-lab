@@ -26,7 +26,7 @@ jobs:
           args: >
             -Dsonar.qualitygate.wait=true
 
-      - name: Send Slack Alert
+      - name: Send Detailed Slack Alert
         if: always()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -39,9 +39,15 @@ jobs:
           GATE_JSON=$(curl -s -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$KEY")
           GATE=$(echo "$GATE_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
           
-          # Fetch Top Issues
-          ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/issues/search?organization=$ORG&projects=$KEY&resolved=false&ps=5")
-          TOTAL_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.total // 0')
+          # Fetch Specific Issue Types
+          BUGS_JSON=$(curl -s -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/issues/search?organization=$ORG&projects=$KEY&types=BUG&resolved=false")
+          TOTAL_BUGS=$(echo "$BUGS_JSON" | jq -r '.total // 0')
+
+          VULN_JSON=$(curl -s -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/issues/search?organization=$ORG&projects=$KEY&types=VULNERABILITY&resolved=false")
+          TOTAL_VULNS=$(echo "$VULN_JSON" | jq -r '.total // 0')
+
+          HOTSPOTS_JSON=$(curl -s -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/hotspots/search?projectKey=$KEY&status=TO_REVIEW")
+          TOTAL_HOTSPOTS=$(echo "$HOTSPOTS_JSON" | jq -r '.paging.total // 0')
 
           if [ "$GATE" = "OK" ]; then
             COLOR="#2EB886"
@@ -57,7 +63,9 @@ jobs:
             --arg sha "${{ github.sha }}" \
             --arg branch "${{ github.ref_name }}" \
             --arg gate "$STATUS_EMOJI" \
-            --arg total "$TOTAL_ISSUES" \
+            --arg bugs "$TOTAL_BUGS" \
+            --arg vulns "$TOTAL_VULNS" \
+            --arg hotspots "$TOTAL_HOTSPOTS" \
             --arg color "$COLOR" \
             --arg dash "https://sonarcloud.io/dashboard?id=$KEY" \
             --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
@@ -80,7 +88,11 @@ jobs:
                   },
                   {
                     type: "section",
-                    text: { type: "mrkdwn", text: ("*Total Open Issues:* " + $total) }
+                    fields: [
+                      { type: "mrkdwn", text: ("*Bugs:* " + $bugs) },
+                      { type: "mrkdwn", text: ("*Vulnerabilities:* " + $vulns) },
+                      { type: "mrkdwn", text: ("*Security Hotspots:* " + $hotspots) }
+                    ]
                   },
                   {
                     type: "actions",
