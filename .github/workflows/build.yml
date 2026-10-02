@@ -1,28 +1,95 @@
 name: Build
+
 on:
   push:
     branches:
       - main
   pull_request:
     types: [opened, synchronize, reopened]
+
 jobs:
   sonarqube:
-    name: SonarQube
+    name: SonarQube Analysis & Notification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Cache SonarQube packages
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.sonar/cache
-          key: ${{ runner.os }}-sonar
-          restore-keys: ${{ runner.os }}-sonar
+
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        uses: SonarSource/sonarqube-scan-action@v3.0.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
             -Dsonar.qualitygate.wait=true
+
+      - name: Send Slack Alert
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          KEY="ayesha752_sonar-lab"
+          ORG="ayesha752"
+          
+          # Fetch Quality Gate Status
+          GATE_JSON=$(curl -s -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$KEY")
+          GATE=$(echo "$GATE_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
+          
+          # Fetch Top Issues
+          ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" "https://sonarcloud.io/api/issues/search?organization=$ORG&projects=$KEY&resolved=false&ps=5")
+          TOTAL_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.total // 0')
+
+          if [ "$GATE" = "OK" ]; then
+            COLOR="#2EB886"
+            STATUS_EMOJI=":white_check_mark: PASSED"
+          else
+            COLOR="#A30200"
+            STATUS_EMOJI=":x: FAILED"
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg actor "${{ github.actor }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg gate "$STATUS_EMOJI" \
+            --arg total "$TOTAL_ISSUES" \
+            --arg color "$COLOR" \
+            --arg dash "https://sonarcloud.io/dashboard?id=$KEY" \
+            --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{
+              attachments: [{
+                color: $color,
+                blocks: [
+                  {
+                    type: "section",
+                    text: { type: "mrkdwn", text: ("*SonarQube Scan Result for " + $repo + "*") }
+                  },
+                  {
+                    type: "section",
+                    fields: [
+                      { type: "mrkdwn", text: ("*Pushed By:*\n" + $actor) },
+                      { type: "mrkdwn", text: ("*Branch:*\n" + $branch) },
+                      { type: "mrkdwn", text: ("*Commit:*\n`" + $sha[0:7] + "`") },
+                      { type: "mrkdwn", text: ("*Quality Gate:*\n" + $gate) }
+                    ]
+                  },
+                  {
+                    type: "section",
+                    text: { type: "mrkdwn", text: ("*Total Open Issues:* " + $total) }
+                  },
+                  {
+                    type: "actions",
+                    elements: [
+                      { type: "button", text: { type: "plain_text", text: "View Dashboard" }, url: $dash },
+                      { type: "button", text: { type: "plain_text", text: "View Pipeline Run" }, url: $run }
+                    ]
+                  }
+                ]
+              }]
+            }')
+
+          curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
